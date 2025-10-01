@@ -17,16 +17,16 @@ public class CompactRoomSessionStarter : MonoBehaviourPunCallbacks
     [SerializeField] Button cancelCountdownButton;
 
     [Header("Countdown UI")]
-    [SerializeField] GameObject countdownPanel;      // panel container (holds text + cancel)
-    [SerializeField] TextMeshProUGUI countdownText;  // countdown number text
-    [SerializeField] float uiUpdateInterval = 0.25f; // how often UI polls remaining time
+    [SerializeField] GameObject countdownPanel;      
+    [SerializeField] TextMeshProUGUI countdownText;  
+    [SerializeField] float uiUpdateInterval = 0.25f; 
 
     [Header("Player List UI")]
-    [SerializeField] Transform playerListContainer;      // parent object (with VerticalLayoutGroup)
+    [SerializeField] Transform playerListContainer;     
     [SerializeField] GameObject playerNamePrefab;
 
-    [SerializeField] Color hostColor = Color.yellow;     // highlight color for host
-    [SerializeField] Color normalColor = Color.white;    // normal player color
+    [SerializeField] Color hostColor = Color.yellow;     
+    [SerializeField] Color normalColor = Color.white;    
 
     const string K_START = "session_countdown_start";
     const string K_DUR = "session_countdown_duration";
@@ -40,7 +40,7 @@ public class CompactRoomSessionStarter : MonoBehaviourPunCallbacks
         if (cancelCountdownButton) cancelCountdownButton.onClick.AddListener(OnCancelClicked);
 
         if (startSessionButton) startSessionButton.interactable = PhotonNetwork.IsMasterClient;
-        if (cancelCountdownButton) cancelCountdownButton.interactable = PhotonNetwork.IsMasterClient;
+        if (cancelCountdownButton) cancelCountdownButton.interactable = true; // everyone can cancel
 
         if (PhotonNetwork.InRoom)
         {
@@ -54,26 +54,6 @@ public class CompactRoomSessionStarter : MonoBehaviourPunCallbacks
         if (countdownPanel) countdownPanel.SetActive(false);
     }
 
-    public override void OnPlayerEnteredRoom(Player newPlayer)
-    {
-        if (PhotonNetwork.IsMasterClient) EvaluateAndSyncCountdown();
-        RefreshPlayerList();
-    }
-
-    public override void OnPlayerLeftRoom(Player otherPlayer)
-    {
-        if (PhotonNetwork.IsMasterClient) EvaluateAndSyncCountdown();
-        RefreshPlayerList();
-    }
-
-    public override void OnMasterClientSwitched(Player newMaster)
-    {
-        if (PhotonNetwork.IsMasterClient) EvaluateAndSyncCountdown();
-        RefreshPlayerList();
-    }
-
-    
-
     void OnDestroy()
     {
         if (startSessionButton) startSessionButton.onClick.RemoveListener(OnStartClicked);
@@ -84,7 +64,6 @@ public class CompactRoomSessionStarter : MonoBehaviourPunCallbacks
     // ---------------------------
     // BUTTON LOGIC
     // ---------------------------
-
     void OnStartClicked()
     {
         if (!PhotonNetwork.IsMasterClient) return;
@@ -92,29 +71,47 @@ public class CompactRoomSessionStarter : MonoBehaviourPunCallbacks
     }
 
     public void OnCancelClicked()
-{
-    if (PhotonNetwork.IsMasterClient)
     {
-        ClearCountdown(); // host cancels directly
+        if (!PhotonNetwork.InRoom) return;
+
+        // Reset countdown for everyone
+        PhotonNetwork.CurrentRoom.SetCustomProperties(new Hashtable
+        {
+            { K_START, 0.0 },
+            { K_DUR, 0f }
+        });
+
+        // stop host coroutine if needed
+        if (PhotonNetwork.IsMasterClient && masterWatcher != null)
+        {
+            StopCoroutine(masterWatcher);
+            masterWatcher = null;
+        }
+
+        // update local UI immediately
+        UpdateCountdownText(0f);
     }
-    else
+
+    void ClearCountdown()
     {
-        // ask the host to cancel
-        photonView.RPC(nameof(RequestCancel), RpcTarget.MasterClient);
+        if (masterWatcher != null)
+        {
+            StopCoroutine(masterWatcher);
+            masterWatcher = null;
+        }
+
+        PhotonNetwork.CurrentRoom?.SetCustomProperties(new Hashtable
+        {
+            { K_START, 0.0 },
+            { K_DUR, 0f }
+        });
+
+        UpdateCountdownText(0f);
     }
-}
-
-[PunRPC]
-void RequestCancel()
-{
-    ClearCountdown();
-}
-
 
     // ---------------------------
     // COUNTDOWN HANDLING
     // ---------------------------
-
     void EvaluateAndSyncCountdown()
     {
         if (!PhotonNetwork.InRoom) return;
@@ -137,15 +134,16 @@ void RequestCancel()
     }
 
     void StartCountdownAsMaster(float duration)
-{
-    if (!PhotonNetwork.IsMasterClient) return;
+    {
+        if (!PhotonNetwork.IsMasterClient) return;
 
-    double start = PhotonNetwork.Time;
-    PhotonNetwork.CurrentRoom?.SetCustomProperties(new Hashtable { { K_START, start }, { K_DUR, duration } });
+        double start = PhotonNetwork.Time;
+        PhotonNetwork.CurrentRoom?.SetCustomProperties(new Hashtable { { K_START, start }, { K_DUR, duration } });
 
-    if (masterWatcher != null) StopCoroutine(masterWatcher);
-    masterWatcher = StartCoroutine(MasterWatchAndLoad());
-}
+        if (masterWatcher != null) StopCoroutine(masterWatcher);
+        masterWatcher = StartCoroutine(MasterWatchAndLoad());
+    }
+
     IEnumerator MasterWatchAndLoad()
     {
         while (true)
@@ -159,7 +157,7 @@ void RequestCancel()
 
             if (remaining <= 0.0 && dur > 0f)
             {
-                PhotonNetwork.CurrentRoom?.SetCustomProperties(new Hashtable { { K_START, 0.0 }, { K_DUR, 0f } });
+                ClearCountdown();
                 PhotonNetwork.LoadLevel(sessionSceneName);
                 yield break;
             }
@@ -168,32 +166,26 @@ void RequestCancel()
         }
     }
 
-   void ClearCountdown()
-{
-    PhotonNetwork.CurrentRoom?.SetCustomProperties(new Hashtable { { K_START, 0.0 }, { K_DUR, 0f } });
-    if (masterWatcher != null) { StopCoroutine(masterWatcher); masterWatcher = null; }
-    UpdateCountdownText(0f);
-}
-
-
     // ---------------------------
-    // UI UPDATES
+    // UI UPDATES & PHOTON CALLBACKS
     // ---------------------------
+    public override void OnJoinedRoom()
+    {
+        base.OnJoinedRoom();
+        RefreshCountdownFromRoom();
+        RefreshPlayerList();
+    }
 
-public override void OnJoinedRoom()
-{
-    base.OnJoinedRoom();
-    RefreshCountdownFromRoom();
-    RefreshPlayerList();   // 👈 make sure new joiners build their list
-}
+    public override void OnRoomPropertiesUpdate(Hashtable propertiesThatChanged)
+    {
+        base.OnRoomPropertiesUpdate(propertiesThatChanged);
+        RefreshCountdownFromRoom();
+        RefreshPlayerList();
+    }
 
-public override void OnRoomPropertiesUpdate(Hashtable propertiesThatChanged)
-{
-    base.OnRoomPropertiesUpdate(propertiesThatChanged);
-    RefreshCountdownFromRoom();
-    RefreshPlayerList();   // 👈 keep both in sync when host changes
-}
-
+    public override void OnPlayerEnteredRoom(Player newPlayer) => RefreshPlayerList();
+    public override void OnPlayerLeftRoom(Player otherPlayer) => RefreshPlayerList();
+    public override void OnMasterClientSwitched(Player newMaster) => RefreshPlayerList();
 
     void RefreshCountdownFromRoom()
     {
@@ -205,35 +197,23 @@ public override void OnRoomPropertiesUpdate(Hashtable propertiesThatChanged)
 
         if (start > 0 && dur > 0)
         {
-            countdownPanel.SetActive(true);  // show to everyone when countdown exists
+            countdownPanel.SetActive(true);
             float remaining = Mathf.Max(0f, (float)(start + dur - PhotonNetwork.Time));
             UpdateCountdownText(remaining);
         }
         else
         {
-            countdownPanel.SetActive(false); // hide otherwise
+            countdownPanel.SetActive(false);
             UpdateCountdownText(0f);
         }
-    Debug.Log($"[CountdownPanel] start={start}, dur={dur}, active={countdownPanel.activeSelf}");
-
-}
-
-
+    }
 
     IEnumerator CountdownUIUpdater()
     {
         while (true)
         {
-            if (!PhotonNetwork.InRoom)
-            {
-                UpdateCountdownText(0f);
-            }
-            else
-            {
-                float remaining = GetRemainingSecondsFromRoom();
-                UpdateCountdownText(remaining);
-            }
-
+            float remaining = PhotonNetwork.InRoom ? GetRemainingSecondsFromRoom() : 0f;
+            UpdateCountdownText(remaining);
             yield return new WaitForSeconds(uiUpdateInterval);
         }
     }
@@ -245,7 +225,7 @@ public override void OnRoomPropertiesUpdate(Hashtable propertiesThatChanged)
         if (secondsLeft <= 0f)
         {
             countdownText.text = "";
-            countdownPanel.SetActive(false); // hide panel when no countdown
+            countdownPanel.SetActive(false);
             return;
         }
 
@@ -253,12 +233,13 @@ public override void OnRoomPropertiesUpdate(Hashtable propertiesThatChanged)
         countdownText.text = secs.ToString();
 
         if (!countdownPanel.activeSelf)
-            countdownPanel.SetActive(true); // show panel if hidden
+            countdownPanel.SetActive(true);
     }
 
     public static float GetRemainingSecondsFromRoom()
     {
         if (!PhotonNetwork.InRoom) return 0f;
+
         var props = PhotonNetwork.CurrentRoom.CustomProperties;
         double start = props.ContainsKey(K_START) ? Convert.ToDouble(props[K_START]) : 0.0;
         float dur = props.ContainsKey(K_DUR) ? Convert.ToSingle(props[K_DUR]) : 0f;
@@ -269,32 +250,20 @@ public override void OnRoomPropertiesUpdate(Hashtable propertiesThatChanged)
     // ---------------------------
     // PLAYER LIST UI
     // ---------------------------
-
-  void RefreshPlayerList()
-{
-    if (playerListContainer == null || playerNamePrefab == null) return;
-
-    // Clear old list
-    foreach (Transform child in playerListContainer)
-        Destroy(child.gameObject);
-
-    foreach (var kvp in PhotonNetwork.CurrentRoom.Players)
+    void RefreshPlayerList()
     {
-        Player p = kvp.Value;
+        if (playerListContainer == null || playerNamePrefab == null || PhotonNetwork.CurrentRoom == null) return;
 
-        // Create entry object
-        GameObject entryObj = Instantiate(playerNamePrefab, playerListContainer);
+        foreach (Transform child in playerListContainer)
+            Destroy(child.gameObject);
 
-        // Find the Text component inside
-        Text entryText = entryObj.GetComponentInChildren<Text>(); // <- using UnityEngine.UI
-
-        entryText.text = p.NickName;
-
-        if (p == PhotonNetwork.MasterClient)
-            entryText.color = hostColor;
-        else
-            entryText.color = normalColor;
+        foreach (var kvp in PhotonNetwork.CurrentRoom.Players)
+        {
+            Player p = kvp.Value;
+            GameObject entryObj = Instantiate(playerNamePrefab, playerListContainer);
+            Text entryText = entryObj.GetComponentInChildren<Text>();
+            entryText.text = p.NickName;
+            entryText.color = (p.ActorNumber == PhotonNetwork.MasterClient.ActorNumber) ? hostColor : normalColor;
+        }
     }
-}
-
 }
