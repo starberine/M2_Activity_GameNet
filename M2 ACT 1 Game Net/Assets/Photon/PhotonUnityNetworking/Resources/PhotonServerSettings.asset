@@ -41,6 +41,11 @@ MonoBehaviour:
   - RespawnSpaceship
   - RequestCancel
   - NotifyNameChanged
+  - UpdatePlayerNameRPC
+  - RequestCancelRPC
+  - RequestCancelCountdownRPC
+  - RPC_CancelCountdown
+  - RPC_UpdatePlayerName
   DisableAutoOpenWizard: 1
   ShowSettings: 1
   DevRegionSetOnce: 1
