@@ -15,18 +15,23 @@ public class CompactRoomSessionStarter : MonoBehaviourPunCallbacks
     [Header("Buttons")]
     [SerializeField] Button startSessionButton;
     [SerializeField] Button cancelCountdownButton;
+    [SerializeField] Button setNameButton; // NEW: button to confirm name change
+
+    [Header("Player Name Input")]
+    [SerializeField] TMP_InputField playerNameInput; // NEW: input field for custom player name
+    
 
     [Header("Countdown UI")]
-    [SerializeField] GameObject countdownPanel;      
-    [SerializeField] TextMeshProUGUI countdownText;  
-    [SerializeField] float uiUpdateInterval = 0.25f; 
+    [SerializeField] GameObject countdownPanel;
+    [SerializeField] TextMeshProUGUI countdownText;
+    [SerializeField] float uiUpdateInterval = 0.25f;
 
     [Header("Player List UI")]
-    [SerializeField] Transform playerListContainer;     
+    [SerializeField] Transform playerListContainer;
     [SerializeField] GameObject playerNamePrefab;
 
-    [SerializeField] Color hostColor = Color.yellow;     
-    [SerializeField] Color normalColor = Color.white;    
+    [SerializeField] Color hostColor = Color.yellow;
+    [SerializeField] Color normalColor = Color.white;
 
     const string K_START = "session_countdown_start";
     const string K_DUR = "session_countdown_duration";
@@ -38,9 +43,10 @@ public class CompactRoomSessionStarter : MonoBehaviourPunCallbacks
     {
         if (startSessionButton) startSessionButton.onClick.AddListener(OnStartClicked);
         if (cancelCountdownButton) cancelCountdownButton.onClick.AddListener(OnCancelClicked);
+        if (setNameButton) setNameButton.onClick.AddListener(OnSetNameClicked);
 
         if (startSessionButton) startSessionButton.interactable = PhotonNetwork.IsMasterClient;
-        if (cancelCountdownButton) cancelCountdownButton.interactable = true; // everyone can cancel
+        if (cancelCountdownButton) cancelCountdownButton.interactable = PhotonNetwork.IsMasterClient;
 
         if (PhotonNetwork.InRoom)
         {
@@ -52,12 +58,17 @@ public class CompactRoomSessionStarter : MonoBehaviourPunCallbacks
         uiUpdater = StartCoroutine(CountdownUIUpdater());
 
         if (countdownPanel) countdownPanel.SetActive(false);
+
+        // Initialize the input field with current nickname
+        if (playerNameInput != null)
+            playerNameInput.text = PhotonNetwork.NickName;
     }
 
     void OnDestroy()
     {
         if (startSessionButton) startSessionButton.onClick.RemoveListener(OnStartClicked);
         if (cancelCountdownButton) cancelCountdownButton.onClick.RemoveListener(OnCancelClicked);
+        if (setNameButton) setNameButton.onClick.RemoveListener(OnSetNameClicked);
         if (uiUpdater != null) StopCoroutine(uiUpdater);
     }
 
@@ -67,30 +78,61 @@ public class CompactRoomSessionStarter : MonoBehaviourPunCallbacks
     void OnStartClicked()
     {
         if (!PhotonNetwork.IsMasterClient) return;
-        StartCountdownAsMaster(10f); // fixed 10s
+        StartCountdownAsMaster(10f);
+        // Disable name changes once countdown starts
+        if (playerNameInput) playerNameInput.interactable = false;
+        if (setNameButton) setNameButton.interactable = false;
+        if (setNameButton != null)
+    setNameButton.onClick.AddListener(OnSetNameClicked);
+
     }
 
     public void OnCancelClicked()
     {
         if (!PhotonNetwork.InRoom) return;
 
-        // Reset countdown for everyone
+        // Anyone cancels
         PhotonNetwork.CurrentRoom.SetCustomProperties(new Hashtable
         {
             { K_START, 0.0 },
             { K_DUR, 0f }
         });
 
-        // stop host coroutine if needed
         if (PhotonNetwork.IsMasterClient && masterWatcher != null)
         {
             StopCoroutine(masterWatcher);
             masterWatcher = null;
         }
 
-        // update local UI immediately
         UpdateCountdownText(0f);
     }
+
+    void OnSetNameClicked()
+    {
+        string newName = playerNameInput.text.Trim();
+        if (string.IsNullOrEmpty(newName)) return;
+
+        PhotonNetwork.NickName = newName; // update local nickname
+
+        // Refresh your own UI immediately
+        RefreshPlayerList();
+
+        // Notify others to refresh their UI
+        photonView.RPC(nameof(NotifyNameChanged), RpcTarget.OthersBuffered, PhotonNetwork.LocalPlayer.ActorNumber, newName);
+    }
+
+[PunRPC]
+void NotifyNameChanged(int actorNumber, string newName)
+{
+    Player p = PhotonNetwork.CurrentRoom.GetPlayer(actorNumber);
+    if (p != null)
+    {
+        p.NickName = newName; // update the player object locally
+        RefreshPlayerList();
+    }
+}
+
+
 
     void ClearCountdown()
     {
@@ -130,7 +172,7 @@ public class CompactRoomSessionStarter : MonoBehaviourPunCallbacks
         if (remaining <= 0.0)
             StartCountdownAsMaster(desired);
         else if (desired < remaining)
-            StartCountdownAsMaster(desired); // shorten only
+            StartCountdownAsMaster(desired);
     }
 
     void StartCountdownAsMaster(float duration)
@@ -167,7 +209,7 @@ public class CompactRoomSessionStarter : MonoBehaviourPunCallbacks
     }
 
     // ---------------------------
-    // UI UPDATES & PHOTON CALLBACKS
+    // PHOTON CALLBACKS
     // ---------------------------
     public override void OnJoinedRoom()
     {
@@ -260,9 +302,12 @@ public class CompactRoomSessionStarter : MonoBehaviourPunCallbacks
         foreach (var kvp in PhotonNetwork.CurrentRoom.Players)
         {
             Player p = kvp.Value;
+
             GameObject entryObj = Instantiate(playerNamePrefab, playerListContainer);
             Text entryText = entryObj.GetComponentInChildren<Text>();
+
             entryText.text = p.NickName;
+
             entryText.color = (p.ActorNumber == PhotonNetwork.MasterClient.ActorNumber) ? hostColor : normalColor;
         }
     }
