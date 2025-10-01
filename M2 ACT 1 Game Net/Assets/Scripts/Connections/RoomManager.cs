@@ -64,7 +64,7 @@ public class RoomManager : MonoBehaviourPunCallbacks
     public override void OnLeftRoom()
     {
         Debug.Log("RoomManager: OnLeftRoom callback received. IsConnected=" + PhotonNetwork.IsConnected + ", InLobby=" + PhotonNetwork.InLobby);
-
+    
         // Update UI before leaving
         UpdatePlayerCountDisplay();
 

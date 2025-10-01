@@ -5,6 +5,7 @@ using UnityEngine.UI;
 using Photon.Pun;
 using Photon.Realtime;
 using ExitGames.Client.Photon; // for Hashtable
+using UnityEngine.EventSystems; // <-- needed for clearing selection
 
 namespace Com.MyCompany.MyGame
 {
@@ -15,13 +16,13 @@ namespace Com.MyCompany.MyGame
         bool isConnecting;
 
         [Header("General UI")]
-        [SerializeField] private GameObject controlPanel;   // connect UI
+        [SerializeField] private GameObject controlPanel;
         [SerializeField] private GameObject progressLabel;
 
         [Header("Lobby UI")]
         [SerializeField] private GameObject lobbyPanel;
         [SerializeField] private InputField createRoomInput;
-        [SerializeField] private Transform roomListContent; // Content transform inside Scroll View
+        [SerializeField] private Transform roomListContent;
         [SerializeField] private GameObject roomListEntryPrefab;
 
         [Header("Room Scene")]
@@ -32,13 +33,9 @@ namespace Com.MyCompany.MyGame
 
         void Awake()
         {
-            // ensure scene sync is enabled before connecting
             PhotonNetwork.AutomaticallySyncScene = true;
-
             if (Instance == null) Instance = this;
             else Destroy(gameObject);
-
-            // Try to get into the lobby flow (this method is defensive about current Photon state)
             TryEnterLobbyFlow();
         }
 
@@ -49,65 +46,61 @@ namespace Com.MyCompany.MyGame
             if (lobbyPanel != null) lobbyPanel.SetActive(false);
         }
 
-        #region UI Actions
-        // Public Connect can be called by other scripts (fallback)
-        public void Connect()
-        {
-            TryEnterLobbyFlow();
-        }
+        public void Connect() => TryEnterLobbyFlow();
 
-        // Core defensive logic to attempt lobby/connect without racing
         private void TryEnterLobbyFlow()
         {
-            // Show progress while we decide / connect
             if (progressLabel != null) progressLabel.SetActive(false);
             if (controlPanel != null) controlPanel.SetActive(false);
 
             PhotonNetwork.GameVersion = gameVersion;
 
-            Debug.Log($"Launcher: TryEnterLobbyFlow. IsConnected={PhotonNetwork.IsConnected}, IsConnectedAndReady={PhotonNetwork.IsConnectedAndReady}, InLobby={PhotonNetwork.InLobby}, InRoom={PhotonNetwork.InRoom}");
-
             if (!PhotonNetwork.IsConnected)
             {
-                // Not connected at all -> start connection
                 isConnecting = PhotonNetwork.ConnectUsingSettings();
-                Debug.Log("Launcher: ConnectUsingSettings() called, isConnecting=" + isConnecting);
                 return;
             }
 
-            // If already connected AND in lobby -> show lobby UI
             if (PhotonNetwork.InLobby)
             {
-                Debug.Log("Launcher: Already in lobby — showing lobby UI.");
-                OnJoinedLobby(); // reuse the callback behavior
+                OnJoinedLobby();
                 return;
             }
 
-            // Connected but not in lobby
-            // Only call JoinLobby if client is ready (connected to master)
             if (PhotonNetwork.IsConnectedAndReady)
             {
-                Debug.Log("Launcher: Connected and ready -> JoinLobby()");
                 PhotonNetwork.JoinLobby();
             }
             else
             {
-                // Connected but not fully ready yet (e.g. ConnectingToMasterServer). Wait for OnConnectedToMaster callback.
-                Debug.Log("Launcher: Connected but not yet ready. Waiting for OnConnectedToMaster to JoinLobby.");
                 isConnecting = true;
-                // Keep progress UI active — OnConnectedToMaster will call JoinLobby when ready.
             }
         }
 
+        // ONLY room logic; never touches player name.
         public void CreateRoomFromInput()
         {
+            Debug.Log(">>> CreateRoomFromInput CALLED");
+
+            // Force InputField to commit edits by clearing selection (safe if EventSystem exists)
+            if (EventSystem.current != null)
+            {
+                EventSystem.current.SetSelectedGameObject(null);
+            }
+            else
+            {
+                Debug.LogWarning("[Launcher] EventSystem.current is null — input focus may not be cleared.");
+            }
+
+            // Room name only
             string rn = (createRoomInput != null) ? createRoomInput.text.Trim() : "";
             if (string.IsNullOrEmpty(rn))
             {
                 rn = "Room_" + Random.Range(1000, 9999);
             }
+            Debug.Log(">>> Room name will be " + rn);
 
-            Hashtable props = new Hashtable { { "scene", roomSceneName } };
+            ExitGames.Client.Photon.Hashtable props = new ExitGames.Client.Photon.Hashtable { { "scene", roomSceneName } };
             RoomOptions options = new RoomOptions
             {
                 MaxPlayers = maxPlayersPerRoom,
@@ -123,23 +116,19 @@ namespace Com.MyCompany.MyGame
             if (string.IsNullOrEmpty(roomName)) return;
             PhotonNetwork.JoinRoom(roomName);
         }
-        #endregion
+        //#endregion
 
         #region Photon Callbacks
         public override void OnConnectedToMaster()
         {
-            Debug.Log("Launcher: OnConnectedToMaster");
-            // Only automatically JoinLobby if this connection attempt was triggered by our flow
             if (isConnecting)
             {
-                Debug.Log("Launcher: OnConnectedToMaster -> JoinLobby()");
                 PhotonNetwork.JoinLobby();
             }
         }
 
         public override void OnDisconnected(DisconnectCause cause)
         {
-            Debug.LogWarningFormat("Launcher: OnDisconnected {0}", cause);
             isConnecting = false;
             if (progressLabel != null) progressLabel.SetActive(false);
             if (controlPanel != null) controlPanel.SetActive(true);
@@ -148,7 +137,6 @@ namespace Com.MyCompany.MyGame
 
         public override void OnJoinedLobby()
         {
-            Debug.Log("Launcher: OnJoinedLobby - show lobby UI");
             isConnecting = false;
             if (progressLabel != null) progressLabel.SetActive(false);
             if (controlPanel != null) controlPanel.SetActive(false);
@@ -192,7 +180,6 @@ namespace Com.MyCompany.MyGame
 
         public override void OnJoinedRoom()
         {
-            Debug.LogFormat("Launcher: OnJoinedRoom. Room: {0}", PhotonNetwork.CurrentRoom.Name);
             if (PhotonNetwork.IsMasterClient)
             {
                 string sceneToLoad = roomSceneName;
@@ -217,7 +204,6 @@ namespace Com.MyCompany.MyGame
         }
         #endregion
 
-        // Helper to directly show lobby UI (safe)
         private void ShowLobbyUIImmediate()
         {
             if (progressLabel != null) progressLabel.SetActive(false);
