@@ -154,8 +154,7 @@ public class PlayerMovement3D : MonoBehaviourPun, IPunObservable
         cc.Move(move * Time.deltaTime);
 
         float moveMagnitude = input.magnitude; // 0 to 1
-animator.SetFloat("Speed", moveMagnitude, 0.1f, Time.deltaTime * 10f);
-Debug.Log("Speed parameter: " + moveMagnitude);
+    animator.SetFloat("Speed", moveMagnitude, 0.1f, Time.deltaTime * 10f);
 
 
 
